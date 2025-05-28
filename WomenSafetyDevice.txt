@@ -1,0 +1,116 @@
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+
+// GSM and GPS pins
+SoftwareSerial gsmSerial(5, 6); // RX, TX for SIM800L/SIM900A
+SoftwareSerial gpsSerial(3, 4); // RX, TX for NEO-6M
+TinyGPSPlus gps;
+
+// Pin definitions
+const int buttonPin = 7;    // Push button pin
+const int soundPin = A0;    // Sound sensor analog pin
+const int buzzerPin = 9;    // Buzzer pin
+
+// Emergency contacts (replace with actual numbers)
+String contacts[] = {
+  "+12345678901", "+12345678902", "+12345678903", 
+  "+12345678904", "+12345678905", "+12345678906", 
+  "+12345678907", "+12345678908", "+12345678909", 
+  "+12345678910"
+};
+String policeNumber = "+12345678900"; // Replace with local police number
+
+// Sound detection variables
+int soundThreshold = 600; // Adjust based on testing
+unsigned long lastSoundTime = 0;
+int helpCount = 0;
+const long helpInterval = 2000; // 2 seconds to detect second "Help"
+
+void setup() {
+  Serial.begin(9600); // For debugging
+  gsmSerial.begin(9600); // GSM module
+  gpsSerial.begin(9600); // GPS module
+  pinMode(buttonPin, INPUT_PULLUP); // Button with internal pull-up
+  pinMode(buzzerPin, OUTPUT); // Buzzer
+  delay(1000);
+
+  // Initialize GSM
+  gsmSerial.println("AT");
+  delay(1000);
+  gsmSerial.println("AT+CMGF=1"); // Set SMS to text mode
+  delay(1000);
+}
+
+void loop() {
+  // Check button press
+  if (digitalRead(buttonPin) == LOW) {
+    activateEmergency();
+  }
+
+  // Check sound sensor for "Help" shouts
+  int soundLevel = analogRead(soundPin);
+  if (soundLevel > soundThreshold) {
+    unsigned long currentTime = millis();
+    if (currentTime - lastSoundTime < helpInterval) {
+      helpCount++;
+      if (helpCount >= 2) {
+        activateEmergency();
+        helpCount = 0; // Reset
+      }
+    } else {
+      helpCount = 1; // First "Help" detected
+    }
+    lastSoundTime = currentTime;
+  }
+
+  // Update GPS data
+  while (gpsSerial.available() > 0) {
+    gps.encode(gpsSerial.read());
+  }
+}
+
+void activateEmergency() {
+  digitalWrite(buzzerPin, HIGH); // Activate buzzer
+  delay(1000); // Buzz for 1 second
+  digitalWrite(buzzerPin, LOW);
+
+  // Get GPS location
+  String location = getLocation();
+  String message = "Emergency! Location: " + location;
+
+  // Send SMS to contacts and police
+  for (int i = 0; i < 10; i++) {
+    sendSMS(contacts[i], message);
+  }
+  sendSMS(policeNumber, message);
+
+  // Make call to first contact (simplified)
+  makeCall(contacts[0]);
+
+  delay(30000); // Prevent multiple triggers (30 seconds cooldown)
+}
+
+String getLocation() {
+  if (gps.location.isValid()) {
+    String lat = String(gps.location.lat(), 6);
+    String lng = String(gps.location.lng(), 6);
+    return "Lat: " + lat + ", Lng: " + lng;
+  } else {
+    return "Location not available";
+  }
+}
+
+void sendSMS(String number, String message) {
+  gsmSerial.println("AT+CMGS=\"" + number + "\"");
+  delay(100);
+  gsmSerial.print(message);
+  delay(100);
+  gsmSerial.write((char)26); // End SMS with Ctrl+Z
+  delay(1000);
+}
+
+void makeCall(String number) {
+  gsmSerial.println("ATD" + number + ";");
+  delay(20000); // Wait 20 seconds for call
+  gsmSerial.println("ATH"); // Hang up
+}
